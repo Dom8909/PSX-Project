@@ -1,84 +1,113 @@
-using TMPro;
 using UnityEngine;
+using TMPro; // Add this to use TextMeshPro
 
-public class Door : MonoBehaviour, IInteractable
+public class DoorController : MonoBehaviour
 {
-    public Transform doorTransform;      // The transform of the door to be rotated
-    public Vector3 openRotationOffset;   // The amount to rotate the door (e.g., (0, 90, 0) for 90 degrees on Y-axis)
-    public float openSpeed = 2f;         // Speed of opening/closing
-    public bool isOpen = false;          // Track if the door is open or closed
-    public InteractText HUDText;
+    [Tooltip("Reference to the player object to detect.")]
+    public GameObject player;
 
-    private Quaternion closedRotation;   // Store the initial rotation of the door
-    private Quaternion targetRotation;   // The target rotation (open or closed)
-    private bool isMoving = false;       // Track if the door is in the middle of opening/closing
+    [Tooltip("The speed at which the door rotates.")]
+    public float doorRotationSpeed = 1f; // Speed factor for Lerp (1 is normal speed)
 
-    void Start()
+    [Tooltip("The target rotation offset for the door when fully open.")]
+    public Vector3 openRotationOffset; // Offset in degrees as a Vector3
+
+    [Tooltip("The TextMeshPro UI element to display interaction instructions.")]
+    public TextMeshProUGUI interactionText;
+
+    private Quaternion initialRotation; // Initial rotation of the door
+    private Quaternion targetRotation;  // Target rotation for the door
+    private bool playerIsInside = false; // Tracks if player is inside the collider
+    private bool isDoorOpen = false;     // Tracks if the door is fully open or closed
+    private float lerpTime = 0f;         // Track time for the Lerp process
+
+    private void Start()
     {
-        // Set the closed rotation as the door's initial local rotation
-        closedRotation = doorTransform.localRotation;
-        targetRotation = closedRotation;
+        // Store the initial rotation of the door
+        initialRotation = transform.rotation;
+
+        // Calculate the target rotation based on the offset
+        targetRotation = initialRotation * Quaternion.Euler(openRotationOffset);
+
+        // Hide the interaction text at the start
+        if (interactionText != null)
+        {
+            interactionText.gameObject.SetActive(false);
+        }
     }
 
-    public void Interact()
+    private void OnTriggerEnter(Collider other)
     {
-        if (isMoving == false)
+        if (other.gameObject == player)
         {
-            if (isOpen == true)
+            playerIsInside = true;
+
+            // Show interaction text based on door state
+            if (interactionText != null)
             {
-                HUDText.UpdateText("Close Door");
+                interactionText.gameObject.SetActive(true);
+                interactionText.text = isDoorOpen ? "Press E to Close" : "Press E to Open";
+            }
+        }
+    }
+
+    private void OnTriggerExit(Collider other)
+    {
+        if (other.gameObject == player)
+        {
+            playerIsInside = false;
+
+            // Hide interaction text when the player exits the trigger area
+            if (interactionText != null)
+            {
+                interactionText.gameObject.SetActive(false);
+            }
+        }
+    }
+
+    private void Update()
+    {
+        // If the player is inside the trigger and presses E, toggle door state
+        if (playerIsInside && Input.GetKeyDown(KeyCode.E))
+        {
+            lerpTime = 0f; // Reset lerp time before starting
+            if (isDoorOpen)
+            {
+                CloseDoor(); // Close the door if it's open
             }
             else
             {
-                HUDText.UpdateText("Open Door");
+                OpenDoor(); // Open the door if it's closed
             }
-        }
-
-        if (Input.GetKeyDown(KeyCode.E))
-        {
-            InteractedWithDoor();
         }
     }
 
-    private void InteractedWithDoor()
+    void OpenDoor()
     {
-        // Trigger the door open/close when interacted with
-        if (!isMoving)
-        {
-            if (isOpen)
-            {
-                // Set the target rotation to the closed position
-                targetRotation = closedRotation;
-            }
-            else
-            {
-                // Calculate the new target rotation by adding the offset to the current rotation
-                targetRotation = doorTransform.localRotation * Quaternion.Euler(openRotationOffset);
-            }
-
-            isOpen = !isOpen; // Toggle door state
-            StartCoroutine(RotateDoor(targetRotation)); // Start rotating the door
-        }
+        StartCoroutine(LerpRotation(targetRotation, "Press E to Close"));
+        isDoorOpen = true; // Update state to open
     }
 
-    System.Collections.IEnumerator RotateDoor(Quaternion targetRotation)
+    void CloseDoor()
     {
-        isMoving = true; // The door is now rotating
-        float elapsedTime = 0f;
-        Quaternion startingRotation = doorTransform.localRotation;
+        StartCoroutine(LerpRotation(initialRotation, "Press E to Open"));
+        isDoorOpen = false; // Update state to closed
+    }
 
-        HUDText.UpdateText("");
-
-        while (elapsedTime < 1f)
+    System.Collections.IEnumerator LerpRotation(Quaternion targetRotation, string interactionTextMessage)
+    {
+        // Continuously Lerp the door to the target rotation
+        while (lerpTime < 1f)
         {
-            // Lerp from the current rotation to the target rotation
-            doorTransform.localRotation = Quaternion.Lerp(startingRotation, targetRotation, elapsedTime);
-            elapsedTime += Time.deltaTime * openSpeed; // Adjust the speed of rotation
-            yield return null;
+            lerpTime += Time.deltaTime * doorRotationSpeed;
+            transform.rotation = Quaternion.Lerp(transform.rotation, targetRotation, lerpTime);
+            yield return null; // Wait for the next frame
         }
 
-        // Ensure final rotation is reached
-        doorTransform.localRotation = targetRotation;
-        isMoving = false; // Finished rotating
+        // Update interaction text when the lerp finishes
+        if (playerIsInside && interactionText != null)
+        {
+            interactionText.text = interactionTextMessage;
+        }
     }
 }

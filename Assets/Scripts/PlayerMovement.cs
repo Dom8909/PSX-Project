@@ -1,83 +1,128 @@
 using UnityEngine;
 
 [RequireComponent(typeof(CharacterController))]
+[RequireComponent(typeof(GravityObject))]
+[RequireComponent(typeof(PlayerAnimationController))]
 public class PlayerMovement : MonoBehaviour
 {
-    public float moveSpeed = 5f; // Speed of character movement
-    public float rotationSpeed = 700f; // Speed of camera rotation
-    public Transform cameraTransform; // Reference to the player's camera
+    [Tooltip("The speed at which the player walks.")]
+    public float walkSpeed = 5f;
 
-    private bool cursorLocked = true; // Cursor locked state
+    [Tooltip("The speed at which the player runs.")]
+    public float runSpeed = 10f;
 
-    private CharacterController controller;
-    private float pitch = 0f; // Vertical rotation for looking up and down
+    [Tooltip("The force applied when jumping.")]
+    public float jumpForce = 7f;
 
-    void Start()
+    [Tooltip("The speed at which the player rotates.")]
+    public float rotationSpeed = 700f;
+
+    private CharacterController characterController;
+    private GravityObject gravityObject; // Reference to GravityObject for jump control
+    private PlayerAnimationController animationController; // For handling animations
+    private Vector3 moveDirection;
+
+    private void Start()
     {
-        controller = GetComponent<CharacterController>();
+        characterController = GetComponent<CharacterController>();
+        gravityObject = GetComponent<GravityObject>();
+        animationController = GetComponent<PlayerAnimationController>();
 
-        // Set the initial cursor lock state
-        LockCursor();
+        if (characterController == null)
+            Debug.LogError("CharacterController component missing.");
+
+        if (gravityObject == null)
+            Debug.LogError("GravityObject component missing.");
+
+        if (animationController == null)
+            Debug.LogError("PlayerAnimationController component missing.");
     }
 
     void Update()
     {
-        // Toggle cursor lock/unlock with the Escape key
-        if (Input.GetKeyDown(KeyCode.Escape))
-        {
-            ToggleCursorLock();
-        }
-
-        if (cursorLocked)
-        {
-            // Character movement based on camera direction
-            float horizontal = Input.GetAxis("Horizontal");
-            float vertical = Input.GetAxis("Vertical");
-
-            Vector3 moveDirection = cameraTransform.forward * vertical + cameraTransform.right * horizontal;
-            moveDirection.y = 0; // Prevent upward/downward movement from affecting horizontal movement
-
-            controller.Move(moveDirection * moveSpeed * Time.deltaTime);
-
-            // Rotate player horizontally with the mouse
-            float mouseX = Input.GetAxis("Mouse X") * rotationSpeed * Time.deltaTime;
-            transform.Rotate(Vector3.up * mouseX);
-
-            // Look up and down with the mouse
-            float mouseY = Input.GetAxis("Mouse Y") * rotationSpeed * Time.deltaTime;
-            pitch -= mouseY; // Invert mouseY to make it look natural
-            pitch = Mathf.Clamp(pitch, -85f, 85f); // Limit vertical look
-
-            cameraTransform.localEulerAngles = new Vector3(pitch, 0f, 0f); // Rotate camera for looking up/down
-        }
+        HandleMovementAndJump();
+        ApplyGravity();
+        HandleAnimations();
     }
 
-    // Method to lock the cursor
-    void LockCursor()
+    // Combines movement and jump logic
+    public void HandleMovementAndJump()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-        cursorLocked = true;
-    }
+        float horizontal = Input.GetAxis("Horizontal");
+        float vertical = Input.GetAxis("Vertical");
 
-    // Method to unlock the cursor
-    void UnlockCursor()
-    {
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-        cursorLocked = false;
-    }
+        // Get direction based on player input
+        Vector3 inputDirection = new Vector3(horizontal, 0, vertical).normalized;
+        bool isRunning = Input.GetKey(KeyCode.LeftShift); // Check if running
+        bool isMoving = inputDirection.magnitude >= 0.1f;  // Check if player is moving
 
-    // Method to toggle cursor lock/unlock state
-    void ToggleCursorLock()
-    {
-        if (cursorLocked)
+        // Only rotate and move if there is input
+        if (isMoving)
         {
-            UnlockCursor();
+            // Determine the target angle based on the camera's forward direction
+            float targetAngle = Mathf.Atan2(inputDirection.x, inputDirection.z) * Mathf.Rad2Deg + Camera.main.transform.eulerAngles.y;
+
+            // Smoothly rotate the player using Quaternion.Slerp
+            Quaternion targetRotation = Quaternion.Euler(0f, targetAngle, 0f);
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+
+            // Calculate movement direction relative to the camera
+            Vector3 direction = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
+
+            // Store the horizontal movement direction
+            moveDirection = direction * (isRunning ? runSpeed : walkSpeed);
         }
         else
         {
-            LockCursor();
+            // No input: Stop horizontal movement but retain vertical velocity
+            moveDirection.x = 0;
+            moveDirection.z = 0;
+        }
+
+        // Handle jump input
+        if (characterController.isGrounded && Input.GetButtonDown("Jump"))
+        {
+            // Trigger jump animation BEFORE applying upward velocity
+            animationController.TriggerJump();
+
+            // Set upward velocity for jumping using gravityObject
+            Vector3 velocity = gravityObject.GetVelocity();
+            velocity.y = Mathf.Sqrt(jumpForce * -2f * Physics.gravity.y); // Using default gravity value
+            gravityObject.SetVelocity(velocity);
+        }
+    }
+
+    // Apply gravity to the player while keeping horizontal movement intact
+    public void ApplyGravity()
+    {
+        Vector3 velocity = gravityObject.GetVelocity();
+
+        // Combine the vertical velocity from gravity with the horizontal movement
+        velocity.x = moveDirection.x;
+        velocity.z = moveDirection.z;
+
+        // Move the player using the CharacterController
+        characterController.Move(velocity * Time.deltaTime);
+    }
+
+    // Handle animations for movement and jumping
+    public void HandleAnimations()
+    {
+        bool isGrounded = characterController.isGrounded;
+
+        // Update grounded state and movement animations
+        animationController.SetGrounded(isGrounded);
+
+        bool isMoving = moveDirection.magnitude > 0.1f;
+        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+
+        // Update movement animations (walking or running)
+        animationController.UpdateMovementAnimations(isMoving, isRunning);
+
+        // If player lands after a jump, trigger landing animation
+        if (isGrounded && gravityObject.GetVelocity().y < 0)
+        {
+            animationController.Land();
         }
     }
 }
