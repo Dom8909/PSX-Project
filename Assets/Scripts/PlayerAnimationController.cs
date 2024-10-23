@@ -3,42 +3,68 @@ using UnityEngine;
 public class PlayerAnimationController : MonoBehaviour
 {
     private Animator animator;
+    private PlayerMovement playerMovement;  // Reference to the movement script
 
-    void Start()
+    private void Start()
     {
-        // Get the Animator component attached to the player
         animator = GetComponent<Animator>();
+        playerMovement = GetComponent<PlayerMovement>(); // Link to the movement script
 
         if (animator == null)
         {
-            Debug.LogError("Animator component missing on the player.");
+            Debug.LogError("Animator not found on the player.");
+        }
+
+        if (playerMovement == null)
+        {
+            Debug.LogError("PlayerMovementWithCamera script not found.");
         }
     }
 
-    // Update movement animations based on player movement and running state
-    public void UpdateMovementAnimations(bool isMoving, bool isRunning)
+    private void Update()
     {
-        animator.SetBool("IsWalking", isMoving && !isRunning);  // Walking state
-        animator.SetBool("IsRunning", isMoving && isRunning);    // Running state
+        HandleAnimations();
     }
 
-    // Trigger the jump animation
-    public void TriggerJump()
+    private void HandleAnimations()
     {
-        animator.SetBool("IsJumping", true);
-        animator.SetBool("IsGrounded", false);  // Player is in the air, no longer grounded
-    }
+        // Grounded and Jumping animations
+        bool isGrounded = playerMovement.IsGrounded();
+        bool isJumping = playerMovement.IsJumping();
 
-    // Handle landing (when player hits the ground)
-    public void Land()
-    {
-        animator.SetBool("IsJumping", false);   // Stop jumping
-        animator.SetBool("IsGrounded", true);   // Player is now grounded
-    }
-
-    // Set grounded state (when falling or jumping ends)
-    public void SetGrounded(bool isGrounded)
-    {
+        // Set the Animator parameters
         animator.SetBool("IsGrounded", isGrounded);
+        animator.SetBool("IsJumping", isJumping);
+
+        // Walking and Running animations
+        float horizontalInput = Input.GetAxis("Horizontal");
+        float verticalInput = Input.GetAxis("Vertical");
+        bool isMoving = Mathf.Abs(horizontalInput) > 0.1f || Mathf.Abs(verticalInput) > 0.1f;
+
+        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+
+        animator.SetBool("IsWalking", isMoving && !isRunning);  // Trigger walking animation if moving but not running
+        animator.SetBool("IsRunning", isMoving && isRunning);   // Trigger running animation if moving and running
+    }
+
+    // Event: Triggered at the start of the jump animation
+    public void OnJumpStart()
+    {
+        Debug.Log("Jump started in animation");
+        playerMovement.StartJump();
+    }
+
+    // Event: Triggered at the peak of the jump animation
+    public void OnJumpPeak()
+    {
+        Debug.Log("Reached jump peak");
+        // If you want to change gravity or any other behavior at the peak, you can modify it here
+    }
+
+    // Event: Triggered when the player lands
+    public void OnJumpLand()
+    {
+        Debug.Log("Player landed via animation");
+        playerMovement.EndJump();
     }
 }

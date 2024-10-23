@@ -1,128 +1,165 @@
 using UnityEngine;
 
 [RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(GravityObject))]
-[RequireComponent(typeof(PlayerAnimationController))]
 public class PlayerMovement : MonoBehaviour
 {
-    [Tooltip("The speed at which the player walks.")]
-    public float walkSpeed = 5f;
+    [Header("Movement Settings")]
+    public float walkSpeed = 5.0f;
+    public float runSpeed = 10.0f;
+    public float jumpForce = 8.0f;
+    public float airControlFactor = 0.6f; // Reduced control when jumping
 
-    [Tooltip("The speed at which the player runs.")]
-    public float runSpeed = 10f;
+    [Header("Gravity Settings")]
+    public float gravity = -9.81f;
+    public float fallMultiplier = 2.5f;
+    public float lowJumpMultiplier = 1.5f;
 
-    [Tooltip("The force applied when jumping.")]
-    public float jumpForce = 7f;
+    [Header("Ground Check Settings")]
+    public Transform groundCheck;
+    public float groundDistance = 0.4f;
+    public float jumpGroundCheckDelay = 0.1f; // Add a small delay after jumping before checking if grounded
+    private float jumpTimer;
 
-    [Tooltip("The speed at which the player rotates.")]
-    public float rotationSpeed = 700f;
+    private bool isGrounded;
+    private bool isJumping;
+    private Vector3 velocity;
 
+    [Header("References")]
+    public Transform cameraTransform;
     private CharacterController characterController;
-    private GravityObject gravityObject; // Reference to GravityObject for jump control
-    private PlayerAnimationController animationController; // For handling animations
-    private Vector3 moveDirection;
 
     private void Start()
     {
         characterController = GetComponent<CharacterController>();
-        gravityObject = GetComponent<GravityObject>();
-        animationController = GetComponent<PlayerAnimationController>();
 
-        if (characterController == null)
-            Debug.LogError("CharacterController component missing.");
-
-        if (gravityObject == null)
-            Debug.LogError("GravityObject component missing.");
-
-        if (animationController == null)
-            Debug.LogError("PlayerAnimationController component missing.");
-    }
-
-    void Update()
-    {
-        HandleMovementAndJump();
-        ApplyGravity();
-        HandleAnimations();
-    }
-
-    // Combines movement and jump logic
-    public void HandleMovementAndJump()
-    {
-        float horizontal = Input.GetAxis("Horizontal");
-        float vertical = Input.GetAxis("Vertical");
-
-        // Get direction based on player input
-        Vector3 inputDirection = new Vector3(horizontal, 0, vertical).normalized;
-        bool isRunning = Input.GetKey(KeyCode.LeftShift); // Check if running
-        bool isMoving = inputDirection.magnitude >= 0.1f;  // Check if player is moving
-
-        // Only rotate and move if there is input
-        if (isMoving)
+        if (cameraTransform == null)
         {
-            // Determine the target angle based on the camera's forward direction
-            float targetAngle = Mathf.Atan2(inputDirection.x, inputDirection.z) * Mathf.Rad2Deg + Camera.main.transform.eulerAngles.y;
+            cameraTransform = Camera.main.transform;
+        }
 
-            // Smoothly rotate the player using Quaternion.Slerp
-            Quaternion targetRotation = Quaternion.Euler(0f, targetAngle, 0f);
-            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+        if (groundCheck == null)
+        {
+            Debug.LogError("Ground check reference is missing.");
+        }
+    }
 
-            // Calculate movement direction relative to the camera
-            Vector3 direction = Quaternion.Euler(0f, targetAngle, 0f) * Vector3.forward;
+    private void Update()
+    {
+        HandleMovement();
+        HandleGravity();
+    }
 
-            // Store the horizontal movement direction
-            moveDirection = direction * (isRunning ? runSpeed : walkSpeed);
+    private void HandleMovement()
+    {
+        // Ground check logic with delay after jump
+        if (jumpTimer <= 0)
+        {
+            RaycastHit hit;
+            if (Physics.Raycast(groundCheck.position, Vector3.down, out hit, groundDistance))
+            {
+                isGrounded = true;
+                if (isJumping) // End the jump when grounded
+                {
+                    isJumping = false;
+                }
+            }
+            else
+            {
+                isGrounded = false;
+            }
         }
         else
         {
-            // No input: Stop horizontal movement but retain vertical velocity
-            moveDirection.x = 0;
-            moveDirection.z = 0;
+            jumpTimer -= Time.deltaTime;
         }
 
-        // Handle jump input
-        if (characterController.isGrounded && Input.GetButtonDown("Jump"))
-        {
-            // Trigger jump animation BEFORE applying upward velocity
-            animationController.TriggerJump();
+        float horizontalInput = Input.GetAxis("Horizontal");
+        float verticalInput = Input.GetAxis("Vertical");
 
-            // Set upward velocity for jumping using gravityObject
-            Vector3 velocity = gravityObject.GetVelocity();
-            velocity.y = Mathf.Sqrt(jumpForce * -2f * Physics.gravity.y); // Using default gravity value
-            gravityObject.SetVelocity(velocity);
+        // Calculate camera-relative direction
+        Vector3 forward = cameraTransform.forward;
+        Vector3 right = cameraTransform.right;
+
+        forward.y = 0f; // Flatten the forward vector on the Y-axis to prevent unintended vertical movement
+        right.y = 0f;
+
+        forward.Normalize();
+        right.Normalize();
+
+        // Movement direction based on camera orientation
+        Vector3 moveDirection = forward * verticalInput + right * horizontalInput;
+
+        // Running and Walking
+        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+        float speed = isRunning ? runSpeed : walkSpeed;
+
+        // Move the player based on input, only if there is significant movement
+        if (moveDirection.magnitude >= 0.1f)
+        {
+            if (!isJumping) // Only move if not jumping
+            {
+                characterController.Move(moveDirection.normalized * speed * Time.deltaTime);
+            }
+            else // Allow limited air control while jumping
+            {
+                characterController.Move(moveDirection.normalized * speed * airControlFactor * Time.deltaTime);
+            }
+        }
+
+        // Jumping logic
+        if (isGrounded && Input.GetButtonDown("Jump"))
+        {
+            velocity.y = Mathf.Sqrt(jumpForce * -2f * gravity);
+            isJumping = true;
+            jumpTimer = jumpGroundCheckDelay;  // Start delay timer to prevent immediate ground check
         }
     }
 
-    // Apply gravity to the player while keeping horizontal movement intact
-    public void ApplyGravity()
+    private void HandleGravity()
     {
-        Vector3 velocity = gravityObject.GetVelocity();
+        // Apply gravity when jumping or falling
+        if (velocity.y > 0 && !Input.GetButton("Jump"))
+        {
+            velocity.y += gravity * lowJumpMultiplier * Time.deltaTime; // Floaty jump effect
+        }
+        else if (velocity.y < 0)
+        {
+            velocity.y += gravity * fallMultiplier * Time.deltaTime; // Fast falling
+        }
+        else
+        {
+            velocity.y += gravity * Time.deltaTime;
+        }
 
-        // Combine the vertical velocity from gravity with the horizontal movement
-        velocity.x = moveDirection.x;
-        velocity.z = moveDirection.z;
-
-        // Move the player using the CharacterController
+        // Apply gravity to the character controller
         characterController.Move(velocity * Time.deltaTime);
     }
 
-    // Handle animations for movement and jumping
-    public void HandleAnimations()
+    // Accessor for the animation controller to check if the player is grounded
+    public bool IsGrounded()
     {
-        bool isGrounded = characterController.isGrounded;
+        return isGrounded;
+    }
 
-        // Update grounded state and movement animations
-        animationController.SetGrounded(isGrounded);
+    // Accessor for the animation controller to check if the player is jumping
+    public bool IsJumping()
+    {
+        return isJumping;
+    }
 
-        bool isMoving = moveDirection.magnitude > 0.1f;
-        bool isRunning = Input.GetKey(KeyCode.LeftShift);
+    public void StartJump()
+    {
+        // Start jump logic
+        Debug.Log("Physics: Jump started");
+        isJumping = true;
+        velocity.y = Mathf.Sqrt(jumpForce * -2f * gravity); // Launch the player upward
+    }
 
-        // Update movement animations (walking or running)
-        animationController.UpdateMovementAnimations(isMoving, isRunning);
-
-        // If player lands after a jump, trigger landing animation
-        if (isGrounded && gravityObject.GetVelocity().y < 0)
-        {
-            animationController.Land();
-        }
+    public void EndJump()
+    {
+        // End jump logic
+        Debug.Log("Physics: Jump ended");
+        isJumping = false;
+        velocity.y = 0; // Reset vertical velocity
     }
 }
